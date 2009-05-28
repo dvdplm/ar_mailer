@@ -102,7 +102,6 @@ class ActionMailer::ARSendmail
   # Creates a new migration using +table_name+ and prints it on stdout.
 
   def self.create_migration(table_name)
-    # TODO: add indexes where appropriate! (dvd, 11-05-2009)
     require 'active_support'
     puts <<-EOF
 class Create#{table_name.classify} < ActiveRecord::Migration
@@ -120,16 +119,33 @@ class Create#{table_name.classify} < ActiveRecord::Migration
       t.column :updated_at, :datetime
       t.column :sent_at, :datetime
     end
-    
-    add_index :emails, :sent_at
-    add_index :emails, :failed
+
+    add_index :#{table_name.tableize}, :sent_at
+    add_index :#{table_name.tableize}, :failed
   end
 
   def self.down
     drop_table :#{table_name.tableize}
   end
 end
-    EOF
+EOF
+
+    puts <<-EOF
+# =============================================================================================================================
+# = Warning! If you're sending emails with attachments you probably want to use LONGTEXT instead of TEXT for the :mail column =
+# =============================================================================================================================
+Example extra migration:
+
+class #{table_name.classify}MailTextToLongtext < ActiveRecord::Migration
+  def self.up
+    execute "ALTER TABLE #{table_name.tableize} CHANGE mail mail LONGTEXT"
+  end
+
+  def self.down
+    execute "ALTER TABLE #{table_name.tableize} CHANGE mail mail TEXT"
+  end
+end
+EOF
   end
 
   ##
@@ -145,7 +161,7 @@ class #{table_name.classify} < ActiveRecord::Base
     not failed? and not sent_at.nil?
   end
 end
-    EOF
+EOF
   end
 
   ##
@@ -171,8 +187,7 @@ end
       size = email.mail.length
       total_size += size
 
-      create_timestamp = email.created_on rescue
-                         email.created_at rescue
+      create_timestamp = email.created_at rescue
                          Time.at(email.created_date) rescue # for Robot Co-op
                          nil
 
@@ -520,9 +535,9 @@ end
   # The records found are locked, so make sure you call this inside a
   # transaction or otherwise manually release to locks
   def find_emails
-    options = { :conditions => ['sent_at IS NULL AND failed = 0 AND (? - last_send_attempt) > 300', Time.now.to_i], :lock => true }
+    options = { :conditions => ['sent_at IS NULL AND failed = ? AND (? - last_send_attempt) > 300', false, Time.now.to_i], :lock => true }
     options[:limit] = batch_size unless batch_size.nil?
-    mail = @email_class.find :all, options
+    mail = @email_class.all(options)
 
     log "#{self.class}#deliver found #{mail.length} emails to send"
     mail
