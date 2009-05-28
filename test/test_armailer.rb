@@ -3,6 +3,7 @@ require 'rubygems'
 require 'active_support'
 require 'action_mailer'
 require 'action_mailer/ar_mailer'
+require 'test_helper'
 
 ##
 # Pretend mailer
@@ -24,8 +25,8 @@ class TestARMailer < Test::Unit::TestCase
   def setup
     Mailer.email_class = Email
 
-    Email.records.clear
-    Mail.records.clear
+    Email.delete_all
+    Mail.delete_all
   end
 
   def test_self_email_class_equals
@@ -33,20 +34,20 @@ class TestARMailer < Test::Unit::TestCase
 
     Mailer.deliver_mail
 
-    assert_equal 2, Mail.records.length
+    assert_equal 2, Mail.count
   end
 
   def test_perform_delivery_activerecord
     Mailer.deliver_mail
 
-    assert_equal 2, Email.records.length
+    assert_equal 2, Email.count
 
-    record = Email.records.first
-    assert_equal 'email', record.mail
-    assert_equal 'user1@example.com', record.to
-    assert_equal 'nobody@example.com', record.from
+    email = Email.first
+    assert_equal 'email', email.mail
+    assert_equal 'user1@example.com', email.to
+    assert_equal 'nobody@example.com', email.from
 
-    assert_equal 'user2@example.com', Email.records.last.to
+    assert_equal 'user2@example.com', Email.last.to
   end
 
 end
