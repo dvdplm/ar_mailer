@@ -46,7 +46,7 @@ class ActionMailer::ARSendmail
   ##
   # The version of ActionMailer::ARSendmail you are running.
 
-  VERSION = '2.1'
+  VERSION = '2.1.2'
 
   ##
   # Maximum number of times authentication will be consecutively retried
@@ -64,9 +64,14 @@ class ActionMailer::ARSendmail
   attr_accessor :delay
 
   ##
-  # Maximum age of emails in seconds before they are removed from the queue.
+  # Maximum age of unsent emails in seconds before they are removed from the queue.
 
-  attr_accessor :max_age
+  attr_accessor :max_retry_age
+
+  ##
+  # Maximum age of sent emails in days before they are removed from the archive altogether.
+
+  attr_accessor :max_archive_age
 
   ##
   # Be verbose
@@ -213,7 +218,8 @@ EOF
     options[:Chdir] = '.'
     options[:Daemon] = false
     options[:Delay] = 60
-    options[:MaxAge] = 86400 * 7
+    options[:MaxRetryAge] = 86400 * 7
+    options[:MaxArchiveAge] = 30
     options[:Once] = false
     options[:RailsEnv] = ENV['RAILS_ENV']
     options[:TableName] = 'Email'
@@ -244,12 +250,20 @@ EOF
         options[:Delay] = delay
       end
 
-      opts.on(      "--max-age MAX_AGE",
-              "Maxmimum age for an email. After this",
+      opts.on(      "--max-retry-age MAX_RETRY_AGE",
+              "Maxmimum age for an unsent email. After this",
+              "we will not try to send it anymore and ",
               "it will be removed from the queue.",
               "Set to 0 to disable queue cleanup.",
-              "Default: #{options[:MaxAge]} seconds", Integer) do |max_age|
-        options[:MaxAge] = max_age
+              "Default: #{options[:MaxRetryAge]} seconds", Integer) do |max_retry_age|
+        options[:MaxRetryAge] = max_retry_age
+      end
+
+      opts.on(      "--max-archive-age MAX_ARCHIVE_AGE",
+              "Keep sent emails for this number of ",
+              "days, after which they are deleted.",
+              "Default: #{options[:MaxArchiveAge]} days", Integer) do |max_archive_age|
+        options[:MaxArchiveAge] = max_archive_age
       end
 
       opts.on("-o", "--once",
@@ -426,31 +440,45 @@ EOF
   # <tt>:Verbose</tt>:: Be verbose.
 
   def initialize(options = {})
-    options[:Delay]     ||= 60
-    options[:TableName] ||= 'Email'
-    options[:MaxAge]    ||= 86400 * 7
+    options[:Delay]         ||= 60
+    options[:TableName]     ||= 'Email'
+    options[:MaxRetryAge]   ||= 86400 * 7
+    options[:MaxArchiveAge] ||= 30
 
-    @batch_size   = options[:BatchSize]
-    @delay        = options[:Delay]
-    @email_class  = options[:TableName].constantize
-    @once         = options[:Once]
-    @verbose      = options[:Verbose]
-    @max_age      = options[:MaxAge]
+    @batch_size       = options[:BatchSize]
+    @delay            = options[:Delay]
+    @email_class      = options[:TableName].constantize
+    @once             = options[:Once]
+    @verbose          = options[:Verbose]
+    @max_retry_age    = options[:MaxRetryAge]
+    @max_archive_age  = options[:MaxArchiveAge]
 
     @failed_auth_count = 0
   end
 
+  def cleanup
+    cleanup_unsent
+    cleanup_old_emails
+  end
+
   ##
   # Removes unsent emails that have lived in the queue for too long. 
-  # If max_age is set to 0, no emails will be removed; max_age defaults
+  # If max_retry_age is set to 0, no emails will be removed; max_retry_age defaults
   # to 7 days (86400 * 7)
-  def cleanup
-    return if @max_age == 0
-    timeout = Time.now - @max_age
+  def cleanup_unsent
+    return if @max_retry_age == 0
+    timeout = Time.now - @max_retry_age
     conditions = ['last_send_attempt > 0 AND created_at < ? AND sent_at IS NULL', timeout]
     mail = @email_class.update_all({:failed => true}, conditions)
 
-    log "#{self.class}#cleanup expired #{mail} emails from the queue"
+    log "#{self.class}#cleanup_unsent expired #{mail} emails from the queue"
+  end
+  
+  # Store 30 days worth of old emails
+  def cleanup_old_emails
+    conditions = ['sent_at < ?', @max_archive_age.days.ago.to_date]
+    log "#{self.class}#cleanup_old_emails Deleting #{@email_class.count(:conditions => conditions)} emails from the archive."
+    @email_class.delete_all(conditions)
   end
 
   ##

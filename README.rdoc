@@ -1,7 +1,7 @@
 = reason for fork
-The purpose of this fork is to keep an archive of sent/unsent emails.
+The purpose of this fork is to keep an archive of sent/unsent emails. The archive is kept for 30 days by default, but can be configured to use any timeperiod by using the --max-archive-age switch.
 
-The Email class (or whatever you prefer to call it) in this for has different attributes.
+The Email class (or whatever you prefer to call it) in this fork has different attributes than the original.
 
 = ar_mailer
 

@@ -244,13 +244,13 @@ EOF
 
   def test_class_parse_args_max_age
     options = ActionMailer::ARSendmail.process_args []
-    assert_equal 86400 * 7, options[:MaxAge]
+    assert_equal 86400 * 7, options[:MaxRetryAge]
 
-    argv = %w[--max-age 86400]
+    argv = %w[--max-retry-age 86400]
 
     options = ActionMailer::ARSendmail.process_args argv
 
-    assert_equal 86400, options[:MaxAge]
+    assert_equal 86400, options[:MaxRetryAge]
   end
 
   def test_class_parse_args_migration
@@ -365,7 +365,7 @@ EOF
     assert_equal "hi\n\nopts\n", err
   end
 
-  def test_cleanup
+  def test_cleanup_unsent
     e1 = Email.create :mail => 'body', :to => 'to', :from => 'from'
     e1.created_at = Time.now
     e2 = Email.create :mail => 'body', :to => 'to', :from => 'from'
@@ -373,11 +373,11 @@ EOF
     e3.update_attributes(:last_send_attempt => 1.day.ago, :created_at => 3.weeks.ago, :sent_at => nil)
 
     out, err = capture_io do
-      @sm.cleanup
+      @sm.cleanup_unsent
     end
 
     assert_equal "", out
-    assert_equal "ActionMailer::ARSendmail#cleanup expired 1 emails from the queue\n", err
+    assert_equal "ActionMailer::ARSendmail#cleanup_unsent expired 1 emails from the queue\n", err
     assert_equal 2, Email.count(:conditions => {:failed => false})
 
     assert_equal [e1, e2], Email.all(:conditions => {:failed => false})
@@ -388,14 +388,26 @@ EOF
     e1.created_at = Time.now
     e2 = Email.create :mail => 'body', :to => 'to', :from => 'from'
 
-    @sm.max_age = 0
+    @sm.max_retry_age = 0
 
     out, err = capture_io do
-      @sm.cleanup
+      @sm.cleanup_unsent
     end
 
     assert_equal '', out
     assert_equal 2, Email.count
+  end
+  
+  def test_cleanup_old_emails
+    e1 = Email.create! :mail => 'body', :to => 'to', :from => 'from', :sent_at => 31.days.ago
+    e2 = Email.create! :mail => 'body', :to => 'to', :from => 'from', :sent_at => 29.days.ago
+    
+    out, err = capture_io do
+      @sm.cleanup_old_emails
+    end
+    
+    assert_equal '', out
+    assert_equal 1, Email.count
   end
 
   def test_deliver
