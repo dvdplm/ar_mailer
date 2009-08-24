@@ -7,18 +7,18 @@ require 'rubygems'
 # Hack in RSET
 
 module Net # :nodoc:
-class SMTP # :nodoc:
+  class SMTP # :nodoc:
 
-  unless instance_methods.include? 'reset' then
-    ##
-    # Resets the SMTP connection.
+    unless instance_methods.include? 'reset' then
+      ##
+      # Resets the SMTP connection.
 
-    def reset
-      getok 'RSET'
+      def reset
+        getok 'RSET'
+      end
     end
-  end
 
-end
+  end
 end
 
 module ActionMailer; end # :nodoc:
@@ -46,7 +46,7 @@ class ActionMailer::ARSendmail
   ##
   # The version of ActionMailer::ARSendmail you are running.
 
-  VERSION = '2.1.2'
+  VERSION = '2.1.3'
 
   ##
   # Maximum number of times authentication will be consecutively retried
@@ -224,6 +224,7 @@ EOF
     options[:RailsEnv] = ENV['RAILS_ENV']
     options[:TableName] = 'Email'
     options[:Pidfile] = options[:Chdir] + '/log/ar_sendmail.pid'
+    options[:DryRun] = false
 
     opts = OptionParser.new do |opts|
       opts.banner = "Usage: #{name} [options]"
@@ -274,18 +275,24 @@ EOF
 
       opts.on("-d", "--daemonize",
               "Run as a daemon process",
-              "Default: #{options[:Daemon]}") do |daemon|
+              "Default: #{options[:Daemon]}\n") do |daemon|
         options[:Daemon] = true
       end
 
       opts.on("-p", "--pidfile PIDFILE",
               "Set the pidfile location",
-              "Default: #{options[:Chdir]}#{options[:Pidfile]}", String) do |pidfile|
+              "Default: #{options[:Chdir]}#{options[:Pidfile]}\n", String) do |pidfile|
         options[:Pidfile] = pidfile
+      end
+      
+      opts.on("-f", "--dry-run",
+              "Dry run: don't send any emails",
+              "Default: Deliver all available emails\n", options[:DryRun]) do |dry_run|
+        options[:DryRun] = dry_run
       end
 
       opts.on(      "--mailq",
-              "Display a list of emails waiting to be sent") do |mailq|
+              "Display a list of emails waiting to be sent\n") do |mailq|
         options[:MailQ] = true
       end
 
@@ -438,6 +445,8 @@ EOF
   # <tt>:TableName</tt>:: Table name that stores the emails
   # <tt>:Once</tt>:: Only attempt to deliver emails once when run is called
   # <tt>:Verbose</tt>:: Be verbose.
+  # <tt>:MaxRetryAge</tt>:: Retry sending unsent emails after n seconds from last attempt (defaults to 300s).
+  # <tt>:MaxArchiveAge</tt>:: Store successfully sent emails in the DB for this long (defaults to 30 days).
 
   def initialize(options = {})
     options[:Delay]         ||= 60
@@ -452,6 +461,7 @@ EOF
     @verbose          = options[:Verbose]
     @max_retry_age    = options[:MaxRetryAge]
     @max_archive_age  = options[:MaxArchiveAge]
+    @dry_run          = options[:DryRun]
 
     @failed_auth_count = 0
   end
@@ -469,7 +479,7 @@ EOF
     return if @max_retry_age == 0
     timeout = Time.now - @max_retry_age
     conditions = ['last_send_attempt > 0 AND created_at < ? AND sent_at IS NULL', timeout]
-    mail = @email_class.update_all({:failed => true}, conditions)
+    mail = @email_class.update_all({:failed => true}, conditions) unless @dry_run
 
     log "#{self.class}#cleanup_unsent expired #{mail} emails from the queue"
   end
@@ -478,7 +488,7 @@ EOF
   def cleanup_old_emails
     conditions = ['sent_at < ?', @max_archive_age.days.ago.to_date]
     log "#{self.class}#cleanup_old_emails Deleting #{@email_class.count(:conditions => conditions)} emails from the archive."
-    @email_class.delete_all(conditions)
+    @email_class.delete_all(conditions) unless @dry_run
   end
 
   ##
@@ -507,7 +517,11 @@ EOF
         email.last_send_attempt = Time.now.to_i
         email.increment :attempts
         begin
-          res = session.send_message email.mail, email.from, email.to
+          if @dry_run
+            res = 'DRY RUN'
+          else
+            res = session.send_message email.mail, email.from, email.to
+          end
           email.failed = false
           email.sent_at = Time.now
           email.success_status = res.string rescue res.inspect # NOTE: some rubies return an Net::HTTP::Response here, others just a stupid String (dvd, 11-05-2009)
@@ -531,7 +545,7 @@ EOF
                 [email.id, e.message, e.class, e.backtrace.join("\n\t")]
           session.reset
         end
-        email.save!
+        email.save! unless @dry_run
       end
 
     end
@@ -584,7 +598,7 @@ EOF
 
   def log(message)
     $stderr.puts message if @verbose
-    ActionMailer::Base.logger.info "ar_sendmail ==> #{message}"
+    ActionMailer::Base.logger.info "ar_sendmail, #{Time.now.strftime("%b %d %H:%M:%S")} ==> #{message}"
   end
 
   ##
